@@ -1,0 +1,142 @@
+name: Build Docker Image and Push
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '5 5 5 * *'
+  push:
+    branches: [ "main" ]
+
+env:
+  PROJECT_NAME_REPO: "ubuntu"
+  BUILD_VERSION: "22.04"
+
+jobs:
+  push_to_registries:
+    name: Push Docker image to multiple registries
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      actions: write
+      contents: write
+    steps:
+      - name: GetRepoName
+        if: ( !cancelled() )
+        run: |
+           REF_NAME="${GITHUB_REPOSITORY##*/}"
+           echo "PROJECT_NAME_REPO=${REF_NAME}" >> "$GITHUB_ENV"
+        shell: bash
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        if: ( !cancelled() )
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        if: ( !cancelled() )
+
+      - name: Check out the repo
+        uses: actions/checkout@v4
+        if: ( !cancelled() )
+        with:
+          fetch-depth: 1
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@f4ef78c080cd8ba55a85445d5b36e214a81df20a
+        if: ( !cancelled() )
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Log in to GitHub registry
+        uses: docker/login-action@65b78e6e13532edd9afa3aa52ac7964289d1a9c1
+        if: ( !cancelled() )
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Log in to Tencent registry GZ
+        uses: docker/login-action@65b78e6e13532edd9afa3aa52ac7964289d1a9c1
+        if: ( !cancelled() )
+        with:
+          registry: ccr.ccs.tencentyun.com
+          username: ${{ secrets.DOCKER_USERNAME_TENCENT }}
+          password: ${{ secrets.DOCKER_PASSWORD_TENCENT }}
+
+      - name: Log in to Tencent registry USW
+        uses: docker/login-action@65b78e6e13532edd9afa3aa52ac7964289d1a9c1
+        with:
+          registry: uswccr.ccs.tencentyun.com
+          username: ${{ secrets.DOCKER_USERNAME_TENCENT }}
+          password: ${{ secrets.DOCKER_PASSWORD_TENCENT }}
+
+      - name: Log in to Aliyun registry HZ
+        uses: docker/login-action@65b78e6e13532edd9afa3aa52ac7964289d1a9c1
+        if: ( !cancelled() )
+        with:
+          registry: registry.cn-hangzhou.aliyuncs.com
+          username: ${{ secrets.DOCKER_USERNAME_ALIYUN }}
+          password: ${{ secrets.DOCKER_PASSWORD_ALIYUN }}
+
+      - name: Log in to Aliyun registry USW
+        uses: docker/login-action@65b78e6e13532edd9afa3aa52ac7964289d1a9c1
+        with:
+          registry: registry.us-west-1.aliyuncs.com
+          username: ${{ secrets.DOCKER_USERNAME_ALIYUN }}
+          password: ${{ secrets.DOCKER_PASSWORD_ALIYUN }}
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        if: ( !cancelled() )
+        uses: docker/metadata-action@9ec57ed1fcdbf14dcef7dfbe97b2010124a938b7
+        with:
+          images: |
+            ${{ secrets.DOCKER_USERNAME }}/${{ env.PROJECT_NAME_REPO  }}
+            ghcr.io/${{ github.repository }}
+            ccr.ccs.tencentyun.com/${{ secrets.DOCKER_USERNAME }}/${{ env.PROJECT_NAME_REPO  }}
+            uswccr.ccs.tencentyun.com/${{ secrets.DOCKER_USERNAME }}/${{ env.PROJECT_NAME_REPO  }}
+            registry.cn-hangzhou.aliyuncs.com/${{ secrets.DOCKER_USERNAME }}/${{ env.PROJECT_NAME_REPO  }}
+            registry.us-west-1.aliyuncs.com/${{ secrets.DOCKER_USERNAME }}/${{ env.PROJECT_NAME_REPO  }}
+          tags: |
+            ${{ env.BUILD_VERSION }}
+            type=sha,enable=true,priority=100,prefix=sha-,suffix=,format=short
+            type=raw,value=action-{{branch}}-{{date 'YYYYMMDD' tz='Asia/Shanghai'}}
+          flavor: |
+            latest=true
+          labels: |
+            maintainer=DockerFlys
+            org.opencontainers.image.title=${{ env.PROJECT_NAME_REPO  }}
+            org.opencontainers.image.description="${{ env.PROJECT_NAME_REPO  }} images update default mirrors"
+            org.opencontainers.image.vendor=DockerFlys
+            org.opencontainers.image.version=${{ env.BUILD_VERSION }}
+            org.opencontainers.image.licenses=MIT
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ github.event.created_at }}
+            org.opencontainers.image.url=https://github.com/${{ github.repository }}
+
+      - name: Build and push Docker images
+        uses: docker/build-push-action@3b5e8027fcad23fda98b2e3ac259d8d67585f671
+        if: ( !cancelled() )
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          platforms: linux/amd64,linux/arm64
+          labels: ${{ steps.meta.outputs.labels }} 
+
+      - name: Dayly Artifact Cleanup
+        uses: jimschubert/delete-artifacts-action@v1
+        with:
+          log_level: 'error'
+          min_bytes: '0'
+      - name: Delete workflow runs
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          retain_days: 0
+          keep_minimum_runs: 6
+      - name: Clean Up
+        uses: AutoModality/action-clean@v1
+      
+          
